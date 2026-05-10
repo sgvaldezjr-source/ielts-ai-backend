@@ -9,14 +9,20 @@ const app = express();
 const upload = multer({ dest: "uploads/" });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// ─── CORS — allow all origins for now (tighten after testing) ─────────────────
+// ─── CORS — allow all origins ─────────────────────────────────────────────────
 app.use(cors({
   origin: "*",
   methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
+  credentials: false,
 }));
 
-app.options("*", cors());
+app.options("*", (req, res) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key");
+  res.sendStatus(200);
+});
 app.use(express.json({ limit: "50mb" }));
 
 // ─── HEALTH CHECK ─────────────────────────────────────────────────────────────
@@ -56,8 +62,8 @@ app.post("/analyse", async (req, res) => {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 2500,
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1000,
         messages: req.body.messages,
       }),
     });
