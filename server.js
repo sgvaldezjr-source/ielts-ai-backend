@@ -4,13 +4,19 @@ const cors = require("cors");
 const multer = require("multer");
 const OpenAI = require("openai");
 const fs = require("fs");
-const path = require("path");
 
 const app = express();
 const upload = multer({ dest: "uploads/" });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-app.use(cors());
+// ─── CORS — allow all origins for now (tighten after testing) ─────────────────
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+}));
+
+app.options("*", cors());
 app.use(express.json({ limit: "50mb" }));
 
 // ─── HEALTH CHECK ─────────────────────────────────────────────────────────────
@@ -31,9 +37,7 @@ app.post("/transcribe", upload.single("audio"), async (req, res) => {
       language: "en",
     });
 
-    // Clean up uploaded file
     fs.unlinkSync(req.file.path);
-
     res.json({ transcript: transcription.text });
   } catch (err) {
     console.error("Transcription error:", err);
