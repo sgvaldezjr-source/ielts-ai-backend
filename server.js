@@ -4,10 +4,13 @@ const cors = require("cors");
 const multer = require("multer");
 const OpenAI = require("openai");
 const fs = require("fs");
+const ffmpeg = require("fluent-ffmpeg");
+const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path;
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
 const upload = multer({ dest: "uploads/" });
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY.trim() });
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 app.use(cors({
@@ -50,12 +53,6 @@ Analyse this IELTS Speaking Part ${part} transcript for pronunciation, fluency a
 QUESTION: ${question}
 TRANSCRIPT: ${transcript}
 
-Assess these four areas:
-1. Individual sounds - likely problem consonants and vowels based on word choices and common L1 interference patterns
-2. Word stress - correct stress placement on key words
-3. Sentence stress and rhythm - natural prominence on content words
-4. Intonation and fluency - use of fillers, hesitation markers, sentence rhythm
-
 Return ONLY this JSON - no markdown, no apostrophes in strings:
 {
   "pronunciation_band": <number 1-9>,
@@ -85,15 +82,30 @@ app.get("/", (req, res) => {
 app.post("/transcribe", upload.single("audio"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No audio file provided" });
+
+    const inputPath = req.file.path;
+    const outputPath = req.file.path + ".mp3";
+
+    // Convert to mp3 for Whisper compatibility
+    await new Promise((resolve, reject) => {
+      ffmpeg(inputPath)
+        .toFormat("mp3")
+        .on("end", resolve)
+        .on("error", reject)
+        .save(outputPath);
+    });
+
     const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(req.file.path),
+      file: fs.createReadStream(outputPath),
       model: "whisper-1",
       language: "en",
     });
-    fs.unlinkSync(req.file.path);
+
+    fs.unlinkSync(inputPath);
+    fs.unlinkSync(outputPath);
     res.json({ transcript: transcription.text });
   } catch (err) {
-    console.error("Transcription error:", err);
+    console.error("Transcription error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
