@@ -57,6 +57,15 @@ async function usageMiddleware(type) {
     const userId = req.headers["x-user-id"];
     if (!userId) return res.status(401).json({ error: "Missing user ID" });
     try {
+      // Check if user is premium — skip limit if so
+      const { data: subscriber } = await supabaseAdmin
+        .from("subscribers")
+        .select("is_premium")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (subscriber?.is_premium) return next();
+
       const { allowed, count } = await checkAndIncrementUsage(userId, type);
       if (!allowed) {
         return res.status(403).json({
