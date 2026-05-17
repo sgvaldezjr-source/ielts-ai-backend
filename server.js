@@ -185,7 +185,7 @@ app.post("/transcribe", upload.single("audio"), async (req, res) => {
 });
 
 // ─── CLAUDE PROXY (writing analysis) ──────────────────────────────────────────
-app.post("/analyse", await usageMiddleware("writing"), async (req, res) => {
+app.post("/analyse", (req, res, next) => usageMiddleware("writing").then(fn => fn(req, res, next)), async (req, res) => {
   try {
     const data = await callClaude(req.body.messages);
     res.json(data);
@@ -196,7 +196,7 @@ app.post("/analyse", await usageMiddleware("writing"), async (req, res) => {
 });
 
 // ─── SPEAKING ANALYSIS - parallel IELTS scoring + pronunciation ───────────────
-app.post("/analyse-speaking", await usageMiddleware("speaking"), async (req, res) => {
+app.post("/analyse-speaking", (req, res, next) => usageMiddleware("speaking").then(fn => fn(req, res, next)), async (req, res) => {
   try {
     const { ieltsMessages, part, question, transcript } = req.body;
 
