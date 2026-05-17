@@ -6,7 +6,73 @@ const OpenAI = require("openai");
 const fs = require("fs");
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path;
+const { createClient } = require("@supabase/supabase-js");
 ffmpeg.setFfmpegPath(ffmpegPath);
+
+// ─── SUPABASE ADMIN CLIENT ────────────────────────────────────────────────────
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
+// ─── FREE TIER USAGE MIDDLEWARE ───────────────────────────────────────────────
+const FREE_LIMIT = 5;
+
+async function checkAndIncrementUsage(userId, type) {
+  const countCol = type === "writing" ? "writing_count" : "speaking_count";
+
+  const { data: existing, error: fetchErr } = await supabaseAdmin
+    .from("usage_tracking")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (fetchErr) throw new Error("Usage check failed");
+
+  if (!existing) {
+    await supabaseAdmin.from("usage_tracking").insert({
+      user_id: userId,
+      writing_count: type === "writing" ? 1 : 0,
+      speaking_count: type === "speaking" ? 1 : 0,
+    });
+    return { allowed: true, count: 1 };
+  }
+
+  const currentCount = existing[countCol];
+
+  if (currentCount >= FREE_LIMIT) {
+    return { allowed: false, count: currentCount };
+  }
+
+  await supabaseAdmin
+    .from("usage_tracking")
+    .update({ [countCol]: currentCount + 1 })
+    .eq("user_id", userId);
+
+  return { allowed: true, count: currentCount + 1 };
+}
+
+async function usageMiddleware(type) {
+  return async (req, res, next) => {
+    const userId = req.headers["x-user-id"];
+    if (!userId) return res.status(401).json({ error: "Missing user ID" });
+    try {
+      const { allowed, count } = await checkAndIncrementUsage(userId, type);
+      if (!allowed) {
+        return res.status(403).json({
+          error: "free_limit_reached",
+          type,
+          count,
+          limit: FREE_LIMIT,
+        });
+      }
+      next();
+    } catch (err) {
+      console.error("Usage middleware error:", err);
+      return res.status(500).json({ error: "Usage check failed" });
+    }
+  };
+}
 
 const app = express();
 const upload = multer({ dest: "uploads/" });
@@ -16,13 +82,13 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY.trim() });
 app.use(cors({
   origin: "*",
   methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-api-key", "x-user-id"],
   credentials: false,
 }));
 app.options("*", (req, res) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key, x-user-id");
   res.sendStatus(200);
 });
 app.use(express.json({ limit: "50mb" }));
@@ -86,7 +152,6 @@ app.post("/transcribe", upload.single("audio"), async (req, res) => {
     const inputPath = req.file.path;
     const outputPath = req.file.path + ".mp3";
 
-    // Convert to mp3 for Whisper compatibility
     await new Promise((resolve, reject) => {
       ffmpeg(inputPath)
         .toFormat("mp3")
@@ -111,7 +176,7 @@ app.post("/transcribe", upload.single("audio"), async (req, res) => {
 });
 
 // ─── CLAUDE PROXY (writing analysis) ──────────────────────────────────────────
-app.post("/analyse", async (req, res) => {
+app.post("/analyse", await usageMiddleware("writing"), async (req, res) => {
   try {
     const data = await callClaude(req.body.messages);
     res.json(data);
@@ -122,7 +187,7 @@ app.post("/analyse", async (req, res) => {
 });
 
 // ─── SPEAKING ANALYSIS - parallel IELTS scoring + pronunciation ───────────────
-app.post("/analyse-speaking", async (req, res) => {
+app.post("/analyse-speaking", await usageMiddleware("speaking"), async (req, res) => {
   try {
     const { ieltsMessages, part, question, transcript } = req.body;
 
